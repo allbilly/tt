@@ -1,0 +1,232 @@
+diff --git a/src/libttsim.cpp b/src/libttsim.cpp
+index d6d046c..b4506d6 100644
+--- a/src/libttsim.cpp
++++ b/src/libttsim.cpp
+@@ -6,6 +6,7 @@
+ // be rare and should always correspond to physical ports/connectivity on the device.
+ // The API/ABI contract and compatibility policy are documented in docs/libttsim_api.md.
+ #include "sim.h"
++#include <cstdio>
+ 
+ #define API_EXPORT __attribute((visibility("default")))
+ 
+@@ -772,7 +773,16 @@ static void clock_current_chip() {
+                     uint32_t inst_rd_ptr = p_tensix->inst_rd_ptr[pipe];
+                     if (inst_rd_ptr != p_tensix->inst_wr_ptr[pipe]) {
+                         uint32_t inst = p_tensix->inst[pipe][inst_rd_ptr];
+-                        if (tensix_decode_and_execute(p_tensix, pipe, inst)) {
++                        bool tensix_callback_completed = tensix_decode_and_execute(p_tensix, pipe, inst);
++                        if (p_tensix->tile_id == 0 && pipe == 0) {
++                            fprintf(stderr,
++                                "{\"event\":\"tensix_opcode_callback\",\"status\":\"%s\","
++                                "\"tile_id\":%u,\"tensix_id\":%u,\"pipe\":%u,"
++                                "\"opcode\":%u,\"instruction_word\":\"0x%08x\"}\n",
++                                tensix_callback_completed ? "executed" : "stalled_retry",
++                                p_tensix->tile_id, tensix_id, pipe, (inst >> 24) & 0xff, inst);
++                        }
++                        if (tensix_callback_completed) {
+                             any_tensix = true;
+                             inst_rd_ptr = (inst_rd_ptr + 1) % TENSIX_INST_FIFO_SIZE;
+                             p_tensix->inst_rd_ptr[pipe] = inst_rd_ptr;
+diff --git a/src/tensix.cpp b/src/tensix.cpp
+index 67da3d5..dfb2323 100644
+--- a/src/tensix.cpp
++++ b/src/tensix.cpp
+@@ -9,10 +9,41 @@
+ #include "sim.h"
+ #include "tensix_decode.h" // generated
+ #include <algorithm>
++#include <cstdio>
++
++#ifndef TTSIM_ELW_TRACE_TILE_ID
++#define TTSIM_ELW_TRACE_TILE_ID 0
++#endif
++#ifndef TTSIM_ELW_TRACE_PIPE
++#define TTSIM_ELW_TRACE_PIPE 0
++#endif
++#ifndef TTSIM_ELW_TRACE_OPERATION_MASK
++#define TTSIM_ELW_TRACE_OPERATION_MASK 7
++#endif
+ 
+ #define IS_TENSIX_NOP(inst) (bits<31,24>(inst) == 0x02)
+ #define TENSIX_NOP (0x02 << 24)
+ 
++static bool tensix_trace_matches(const char *operation, uint32_t tile_id, uint32_t pipe);
++
++static void tensix_trace_issue(TensixState *p_tensix, uint32_t pipe, uint32_t slot, uint32_t inst) {
++    uint32_t opcode = bits<31,24>(inst);
++    if (opcode != 0x27 && opcode != 0x28 && opcode != 0x30) {
++        return;
++    }
++    const char *operation = opcode == 0x27 ? "ELWMUL" : (opcode == 0x30 ? "ELWSUB" : "ELWADD");
++    if (!tensix_trace_matches(operation, p_tensix->tile_id, pipe)) {
++        return;
++    }
++    fprintf(stderr,
++        "{\"event\":\"tensix_instruction_issue\",\"status\":\"issued\",\"chip\":\"Blackhole\","
++        "\"tile_id\":%u,\"tile\":{\"x\":%u,\"y\":%u},\"pipe\":%u,\"queue_slot\":%u,"
++        "\"queue_slot_kind\":\"per-pipe FIFO position, not Tensix stream-table offset\","
++        "\"operation\":\"%s\",\"instruction_word\":\"0x%08x\",\"issuer_pc\":null}\n",
++        p_tensix->tile_id, p_tensix->tile_id % 14 + (p_tensix->tile_id % 14 >= 7 ? 3 : 1), p_tensix->tile_id / 14 + 2,
++        pipe, slot, operation, inst);
++}
++
+ void tensix_init(TensixState *p_tensix, uint32_t tile_id) {
+     memset(p_tensix, 0, sizeof(TensixState));
+     p_tensix->tile_id = tile_id;
+@@ -38,6 +69,7 @@ static void tensix_push_inst_fifo(TensixState *p_tensix, uint32_t pipe, uint32_t
+     }
+     uint32_t inst_wr_ptr = p_tensix->inst_wr_ptr[pipe];
+     p_tensix->inst[pipe][inst_wr_ptr] = inst;
++    tensix_trace_issue(p_tensix, pipe, inst_wr_ptr, inst);
+     inst_wr_ptr = (inst_wr_ptr + 1) % TENSIX_INST_FIFO_SIZE;
+     p_tensix->inst_wr_ptr[pipe] = inst_wr_ptr;
+     p_tensix->inst_pipes_active |= 1 << pipe;
+@@ -177,6 +209,20 @@ void tensix_push_inst(TensixState *p_tensix, uint32_t pipe, uint32_t inst, bool
+         case 0x03: mop_cfg(p_tensix, pipe, inst); break; // MOP_CFG
+         default: replay_expander(p_tensix, pipe, inst); break; // everything else is just passthrough
+     }
++    if (p_tensix->tile_id == 0 && pipe == 0 && opcode >= 0x01 && opcode <= 0x04) {
++        const char *name = opcode == 0x01 ? "MOP" : opcode == 0x02 ? "NOP" :
++                           opcode == 0x03 ? "MOP_CFG" : "REPLAY";
++        const char *status = opcode == 0x01 ? "expanded" : opcode == 0x02 ? "consumed" :
++                             opcode == 0x03 ? "configured" : (bits<0,0>(inst) ? "load_started" : "replayed");
++        fprintf(stderr,
++            "{\"event\":\"tensix_stream_control\",\"status\":\"%s\",\"name\":\"%s\","
++            "\"tile_id\":%u,\"pipe\":%u,\"opcode\":%u,\"instruction_word\":\"0x%08x\","
++            "\"loop_count\":%u,\"mop_type\":%u,\"zmask_lo16\":%u,\"zmask_hi16\":%u,"
++            "\"load_mode\":%u,\"execute_while_loading\":%u,\"replay_len\":%u,\"start_idx\":%u}\n",
++            status, name, p_tensix->tile_id, pipe, opcode, inst,
++            bits<22,16>(inst), bits<23,23>(inst), bits<15,0>(inst), p_tensix->mop_zmask_hi16[pipe],
++            bits<0,0>(inst), bits<1,1>(inst), bits<13,4>(inst), bits<23,14>(inst));
++    }
+ }
+ 
+ static inline uint32_t step_prng(uint32_t state) {
+@@ -1584,6 +1630,87 @@ struct elw_op_sub {
+     static inline bool is_sub() { return true; }
+ };
+ 
++// Opt-in read-only ELW trace. Filters are fixed at compile time for this build.
++static bool tensix_trace_matches(const char *operation, uint32_t tile_id, uint32_t pipe) {
++    uint32_t operation_bit = operation[3] == 'A' ? 1u : (operation[3] == 'M' ? 2u : 4u);
++    return tile_id == TTSIM_ELW_TRACE_TILE_ID && pipe == TTSIM_ELW_TRACE_PIPE &&
++        (TTSIM_ELW_TRACE_OPERATION_MASK & operation_bit) != 0;
++}
++
++static bool tensix_trace_begin(const char *operation, uint32_t tile_id, uint32_t pipe,
++                               uint32_t word, const char *status) {
++    if (!tensix_trace_matches(operation, tile_id, pipe)) {
++        return false;
++    }
++    fprintf(stderr,
++        "{\"event\":\"tensix_execute_callback\",\"status\":\"%s\",\"chip\":\"Blackhole\","
++        "\"tile_id\":%u,\"tile\":{\"x\":%u,\"y\":%u},\"pipe\":%u,\"operation\":\"%s\","
++        "\"instruction_word\":\"0x%08x\",\"decoded\":{\"opcode\":%u,\"dst\":%u,"
++        "\"addr_mode\":%u,\"instr_mod19\":%u,\"dest_accum_en\":%u,\"clear_dvalid\":%u}",
++        status, tile_id, tile_id % 14 + (tile_id % 14 >= 7 ? 3 : 1), tile_id / 14 + 2, pipe, operation, word,
++        (word >> 24) & 0xff, word & 0x3ff, (word >> 14) & 7, (word >> 19) & 3,
++        (word >> 21) & 1, (word >> 22) & 3);
++    return true;
++}
++
++static void tensix_trace_write_snapshot(FILE *file, const char *name, TensixState *p_tensix,
++                                        uint32_t pipe, uint32_t src_a_bank, uint32_t src_b_bank,
++                                        uint32_t src_a_row, uint32_t src_b_row, uint32_t dst_row,
++                                        const TensixConfigState *p_config, uint32_t state_id,
++                                        uint32_t src_a_fmt, uint32_t src_b_fmt, uint32_t fidelity_phase,
++                                        uint32_t dest_accum_en) {
++    fprintf(file,
++        ",\"%s\":{\"src_a\":{\"bank\":%u,\"valid_mask\":%u,\"valid\":%s,\"format\":%u,\"row_start\":%u,\"rows\":[",
++        name, src_a_bank, p_tensix->src_a_valid,
++        (p_tensix->src_a_valid & (1 << src_a_bank)) ? "true" : "false", src_a_fmt, src_a_row);
++    for (uint32_t row = 0; row < 8; row++) {
++        fprintf(file, "%s[", row ? "," : "");
++        for (uint32_t col = 0; col < ROW_SIZE; col++) {
++            fprintf(file, "%s\"0x%08x\"", col ? "," : "", p_tensix->src_a[src_a_bank][src_a_row + row][col]);
++        }
++        fputc(']', file);
++    }
++    fprintf(file,
++        "]},\"src_b\":{\"bank\":%u,\"valid_mask\":%u,\"valid\":%s,\"format\":%u,\"row_start\":%u,\"rows\":[",
++        src_b_bank, p_tensix->src_b_valid,
++        (p_tensix->src_b_valid & (1 << src_b_bank)) ? "true" : "false", src_b_fmt, src_b_row);
++    for (uint32_t row = 0; row < 8; row++) {
++        fprintf(file, "%s[", row ? "," : "");
++        for (uint32_t col = 0; col < ROW_SIZE; col++) {
++            fprintf(file, "%s\"0x%08x\"", col ? "," : "", p_tensix->src_b[src_b_bank][src_b_row + row][col]);
++        }
++        fputc(']', file);
++    }
++    fprintf(file,
++        "]},\"dst\":{\"row_start\":%u,\"rows\":[", dst_row);
++    for (uint32_t row = 0; row < 8; row++) {
++        uint32_t current_row = dst_row + row;
++        fprintf(file, "%s{\"row\":%u,\"valid\":%s,\"internal_u16\":[",
++                row ? "," : "", current_row, p_tensix->dst_row_valid[current_row] ? "true" : "false");
++        for (uint32_t col = 0; col < ROW_SIZE; col++) {
++            fprintf(file, "%s\"0x%04x\"", col ? "," : "", p_tensix->dst[current_row][col]);
++        }
++        fputs("],\"decoded_bf16\":[", file);
++        for (uint32_t col = 0; col < ROW_SIZE; col++) {
++            fprintf(file, "%s\"0x%04x\"", col ? "," : "", dst_decode_bf16(p_tensix->dst[current_row][col]));
++        }
++        fputs("]}", file);
++    }
++    fprintf(file,
++        "]},\"control\":{\"state_id\":%u,\"src_a_format\":%u,\"src_b_format\":%u,"
++        "\"dst_format\":%u,\"fp32_enabled\":%u,\"int8_enabled\":%u,"
++        "\"flush_denormals\":%u,\"dest_accum_en\":%u,\"fidelity_counter\":%u,"
++        "\"fidelity_phase\":%u,\"thread_dst_offset\":%u,\"thread_fidelity_base_phase\":%u},"
++        "\"counters\":{\"src_a_rwc\":%u,\"src_b_rwc\":%u,\"dst_rwc\":%u,\"fidelity\":%u}}",
++        state_id, src_a_fmt, src_b_fmt, p_config->ALU_FORMAT_SPEC_REG2_Dstacc,
++        p_config->ALU_ACC_CTRL_Fp32_enabled, p_config->ALU_ACC_CTRL_INT8_math_enabled,
++        !p_config->ALU_ACC_CTRL_Zero_Flag_disabled_src, dest_accum_en,
++        p_tensix->fidelity[pipe], fidelity_phase,
++        p_tensix->thread[pipe].DEST_TARGET_REG_CFG_MATH_Offset,
++        p_tensix->thread[pipe].FIDELITY_BASE_Phase,
++        p_tensix->src_a_rwc[pipe], p_tensix->src_b_rwc[pipe], p_tensix->dst_rwc[pipe], p_tensix->fidelity[pipe]);
++}
++
+ template<class elw_op>
+ static bool tensix_elw_op(TensixState *p_tensix, uint32_t pipe, uint32_t dst, uint32_t addr_mode, uint32_t instr_mod19,
+                           uint32_t dest_accum_en, uint32_t clear_dvalid) {
+@@ -1593,7 +1720,14 @@ static bool tensix_elw_op(TensixState *p_tensix, uint32_t pipe, uint32_t dst, ui
+     }
+     uint32_t src_a_bank = p_tensix->src_a_matrix_bank;
+     uint32_t src_b_bank = p_tensix->src_b_matrix_bank;
++    const char *operation = elw_op::is_mul() ? "ELWMUL" : (elw_op::is_sub() ? "ELWSUB" : "ELWADD");
++    uint32_t instruction_word = (uint32_t(elw_op::is_mul() ? 0x27 : (elw_op::is_sub() ? 0x30 : 0x28)) << 24) |
++        dst | (addr_mode << 14) | (instr_mod19 << 19) | (dest_accum_en << 21) | (clear_dvalid << 22);
+     if (!(p_tensix->src_a_valid & (1 << src_a_bank)) || !(p_tensix->src_b_valid & (1 << src_b_bank))) {
++        if (tensix_trace_begin(operation, p_tensix->tile_id, pipe, instruction_word, "stalled_retry")) {
++            fprintf(stderr, ",\"src_a_valid_mask\":%u,\"src_b_valid_mask\":%u}\n",
++                    p_tensix->src_a_valid, p_tensix->src_b_valid);
++        }
+         return false; // stall until both valid
+     }
+ 
+@@ -1639,6 +1773,11 @@ static bool tensix_elw_op(TensixState *p_tensix, uint32_t pipe, uint32_t dst, ui
+     if (!elw_op::is_mul()) {
+         TTSIM_VERIFY(!fidelity_phase, NonContractualBehavior, "ELWADD/SUB should not be used with fidelity_phase=%d", fidelity_phase);
+     }
++    bool trace_enabled = tensix_trace_begin(operation, p_tensix->tile_id, pipe, instruction_word, "success");
++    if (trace_enabled) {
++        tensix_trace_write_snapshot(stderr, "before", p_tensix, pipe, src_a_bank, src_b_bank,
++            src_a_row, src_b_row, dst_row, p_config, state_id, src_a_fmt, src_b_fmt, fidelity_phase, dest_accum_en);
++    }
+     for (uint32_t row = 0; row < 8; row++) {
+         for (uint32_t col = 0; col < ROW_SIZE; col++) {
+             uint32_t value_a = p_tensix->src_a[src_a_bank][src_a_row + row][col];
+@@ -1715,6 +1854,11 @@ static bool tensix_elw_op(TensixState *p_tensix, uint32_t pipe, uint32_t dst, ui
+     }
+     math_update_counters(p_tensix, pipe, addr_mode, true);
+     math_clear_src_valid(p_tensix, pipe, clear_dvalid);
++    if (trace_enabled) {
++        tensix_trace_write_snapshot(stderr, "after", p_tensix, pipe, src_a_bank, src_b_bank,
++            src_a_row, src_b_row, dst_row, p_config, state_id, src_a_fmt, src_b_fmt, fidelity_phase, dest_accum_en);
++        fputs("}\n", stderr);
++    }
+     return true;
+ }
+ 

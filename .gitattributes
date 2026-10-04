@@ -1,0 +1,2 @@
+# Unified-diff context lines in patch artifacts contain a separator space.
+*.patch whitespace=-blank-at-eol,-blank-at-eof
