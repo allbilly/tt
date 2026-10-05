@@ -2,7 +2,7 @@
 
 Low-level register, FIFO, and instruction experiments on Tenstorrent's official single-chip Blackhole simulator (`ttsim` v1.10.1). Python uploads handwritten RV32 BRISC/TRISC programs, drives the `libttsim` C ABI, and checks device-written results from raw Tensix instructions.
 
-The examples use no TT-Metal or TTNN runtime. Results describe simulator behavior; they make no physical-hardware or performance claim.
+The raw ISA examples use no TT-Metal or TTNN runtime. Results describe simulator behavior; they make no physical-hardware or performance claim.
 
 ## Quick start
 
@@ -41,4 +41,5 @@ The recorded run observed all 94 runnable instruction names and checked ADD/MUL/
 - [Architecture and instruction streams](docs/architecture.md): ABI, addresses, bootstrap, BF16 workload, and TRISC controls.
 - [Verification and tracing](docs/verification.md): instruction inventory, state capture, byte patch, stall diagnostic, and recorded results.
 - [Pinned sources and tested host](docs/sources.md): revisions, checksums, references, and build environment.
+- [llama.cpp experiment](docs/llama-first-token.md): TinyLlama passed one layer and one token through GGML/TTNN under Blackhole TTSim.
 - [Trace patch](patches/README.md): patch scope and build behavior.

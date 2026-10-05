@@ -1,0 +1,44 @@
+--- a/examples/simple/simple.cpp
++++ b/examples/simple/simple.cpp
+@@ -84,7 +84,16 @@
+     // initialize the model
+ 
+     llama_model_params model_params = llama_model_default_params();
+-    model_params.n_gpu_layers = ngl;
++    // This fork counts the output head first. Reserve that slot, then override
++    // its weights back to CPU so -ngl 1 selects one transformer block.
++    model_params.n_gpu_layers = ngl > 0 ? ngl + 1 : 0;
++    auto cpu_device = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU);
++    llama_model_tensor_buft_override cpu_output[] = {
++        {"^output.*", ggml_backend_dev_buffer_type(cpu_device)},
++        {nullptr, nullptr},
++    };
++    model_params.tensor_buft_overrides = cpu_output;
++    fprintf(stderr, "sim-transformer-layers=%d output-weights=CPU\n", ngl);
+ 
+     llama_model * model = llama_model_load_from_file(model_path.c_str(), model_params);
+ 
+@@ -110,9 +119,13 @@
+ 
+     llama_context_params ctx_params = llama_context_default_params();
+     // n_ctx is the context size
+-    ctx_params.n_ctx = n_prompt + n_predict - 1;
++    ctx_params.n_ctx = 128;
++    ctx_params.offload_kqv = false;
++    ctx_params.n_threads = 2;
++    ctx_params.n_threads_batch = 2;
+     // n_batch is the maximum number of tokens that can be processed in a single call to llama_decode
+-    ctx_params.n_batch = n_prompt;
++    ctx_params.n_batch = 32;
++    ctx_params.n_ubatch = 32;
+     // enable performance counters
+     ctx_params.no_perf = false;
+ 
+@@ -180,6 +193,7 @@
+         // sample the next token
+         {
+             new_token_id = llama_sampler_sample(smpl, ctx, -1);
++            fprintf(stderr, "first-token-id=%d\n", new_token_id);
+ 
+             // is it an end of generation?
+             if (llama_vocab_is_eog(vocab, new_token_id)) {

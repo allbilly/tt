@@ -1,0 +1,74 @@
+[
+  {
+    "name": "reflect",
+    "repository": "boost-ext/reflect",
+    "ref": "v1.2.6",
+    "archive_sha256": "2991391d326886a20522ee376c04dceb4ad200ffba909bbce9a4cbe655b61ab8"
+  },
+  {
+    "name": "enchantum",
+    "repository": "ZXShady/enchantum",
+    "ref": "8ca5b0eb7e7ebe0252e5bc6915083f1dd1b8294e",
+    "archive_sha256": "3b3e218706a786493af3949572428562cdbadd92a8a3bb8e1d4fc20fa39460c4"
+  },
+  {
+    "name": "fmt",
+    "repository": "fmtlib/fmt",
+    "ref": "11.1.4",
+    "archive_sha256": "ac366b7b4c2e9f0dde63a59b3feb5ee59b67974b14ee5dc9ea8ad78aa2c1ee1e"
+  },
+  {
+    "name": "range-v3",
+    "repository": "ericniebler/range-v3",
+    "ref": "0.12.0",
+    "archive_sha256": "015adb2300a98edfceaf0725beec3337f542af4915cec4d0b89fa0886f4ba9cb"
+  },
+  {
+    "name": "xtl",
+    "repository": "xtensor-stack/xtl",
+    "ref": "0.8.0",
+    "archive_sha256": "ee38153b7dd0ec84cee3361f5488a4e7e6ddd26392612ac8821cbc76e740273a"
+  },
+  {
+    "name": "xtensor",
+    "repository": "xtensor-stack/xtensor",
+    "ref": "0.26.0",
+    "archive_sha256": "f5f42267d850f781d71097b50567a480a82cd6875a5ec3e6238555e0ef987dc6"
+  },
+  {
+    "name": "xtensor-blas",
+    "repository": "xtensor-stack/xtensor-blas",
+    "ref": "0.22.0",
+    "archive_sha256": "4cda5ed77ba4b78fdd913a70ccfdf53d86185f61da5713f9edd935488d5db828"
+  },
+  {
+    "name": "spdlog",
+    "repository": "gabime/spdlog",
+    "ref": "v1.15.2",
+    "archive_sha256": "7a80896357f3e8e920e85e92633b14ba0f229c506e6f978578bdc35ba09e9a5d"
+  },
+  {
+    "name": "tt-logger",
+    "repository": "tenstorrent/tt-logger",
+    "ref": "v1.1.8",
+    "archive_sha256": "9f19f5ade2f9c28397fb58548c14020dd5de394b51b25e468e7af509758f6bff"
+  },
+  {
+    "name": "nlohmann_json",
+    "repository": "nlohmann/json",
+    "ref": "v3.11.3",
+    "archive_sha256": "0d8ef5af7f9794e3263480193c491549b2ba6cc74bb018906202ada498a79406"
+  },
+  {
+    "name": "simd-everywhere",
+    "repository": "simd-everywhere/simde",
+    "ref": "v0.8.2",
+    "archive_sha256": "ed2a3268658f2f2a9b5367628a85ccd4cf9516460ed8604eed369653d49b25fb"
+  },
+  {
+    "name": "Taskflow",
+    "repository": "taskflow/taskflow",
+    "ref": "v3.7.0",
+    "archive_sha256": "788b88093fb3788329ebbf7c7ee05d1f8960d974985a301798df01e77e04233b"
+  }
+]

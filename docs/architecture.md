@@ -4,7 +4,7 @@
 
 This repository executes small RV32 BRISC/TRISC control programs and raw Tensix instructions on Tenstorrent's official single-chip Blackhole simulator. The examples are low-level register, FIFO, and ISA experiments, not a CUDA-like kernel launch API. Python uploads bytes and drives the documented `libttsim` C ABI; simulated BRISC/TRISC code writes Tensix words through the instruction apertures. The host never writes arithmetic results into device memory.
 
-The lab stops at a small, exact BF16 workload. It does not use `tt-emule`, TT-Metal, TTNN, a kernel runtime, a physical card, or the simulator's private math helpers. It makes no hardware or performance claim.
+The raw ISA examples stop at a small, exact BF16 workload. They do not use `tt-emule`, TT-Metal, TTNN, a kernel runtime, a physical card, or the simulator's private math helpers. They make no hardware or performance claim. The separate [llama.cpp experiment](llama-first-token.md) uses TTNN and TT-Metal above the simulator.
 
 ## Transport, addresses, and bootstrap
 
